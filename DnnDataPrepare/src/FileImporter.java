@@ -313,14 +313,27 @@ public class FileImporter {
 		
 		    // Split the text into smaller paragraphs
 		    StringBuilder currentParagraphRaw = new StringBuilder();
+		    boolean sentenceEndFlag = false;
+		    int nonContentlineCount = 0;
 		    while((line = bufferedReader.readLine()) != null) {
 				boolean containsAlphabet = line.matches(".*[a-zA-Z]+.*");
-				if(!containsAlphabet) {
+			
+				if(line.length()==0) {
+					nonContentlineCount ++;
+					continue;
+				}
+					
+				// Conditions to identify the break of paragraph 
+				// If new line contains Alphabetic characters, starts with its upper case, 
+				// 		and the current buffer (currentParagraphRaw) has ended with period
+				//		and one or more non-content line has met 
+				// or more than two non-content line has met (real content has been divided)
+				if((containsAlphabet && sentenceEndFlag && Character.isUpperCase(line.charAt(0)) && nonContentlineCount >0) 
+						|| (nonContentlineCount>2)) {
 					if(currentParagraphRaw.length()>0) {
 						allRawParagraphs.add(Util.removeRedundantSpace(currentParagraphRaw.toString()));
 					 	currentParagraphRaw.setLength(0);
 					}
-					 continue;
 				}
 				
 				// Remove the reference in the format of "[##]" from the text.
@@ -328,42 +341,49 @@ public class FileImporter {
 
 				// Remove the urls in the text
 				line = line.replaceAll("^(https?|ftp|file)://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]", "");
-				if(line.length()==0)
+				if(line.length()==0) {
+					nonContentlineCount++;
 					continue;
+				}
 				
 				// Replace underscore with space.
 				line = line.replaceAll("_|/", " ");
 				
 				// Remove the lines contains less than 3 letters.
 				String letterOnly = line.replaceAll("[^a-zA-Z]", "");
-				if(letterOnly.length()<=2)
+				if(letterOnly.length()<=2) {
+					nonContentlineCount++;
 					continue;
-				
-				
-				// Remove the beginning of the line if it's not alphabetic chars and split the paragraph.
-				Matcher matchList = Pattern.compile("^[^a-zA-Z]+").matcher(line);
-				if (matchList.find()) {
-					String toRemove = matchList.group();
-					if(currentParagraphRaw.length()>0) {
-						allRawParagraphs.add(Util.removeRedundantSpace(currentParagraphRaw.toString()));
-					    currentParagraphRaw.setLength(0);
-					}
-					currentParagraphRaw.append(line.substring(toRemove.length()-1, line.length()));
-				} else {
-					currentParagraphRaw.append(line);
 				}
+				
+				// Remove the beginning of the line if it's not alphabetic nor numeric chars and split the paragraph.
+				Matcher matchList = Pattern.compile("^[^a-zA-Z0-9]+").matcher(line);
+//				if (matchList.find()) {
+//					String toRemove = matchList.group();
+//					if(currentParagraphRaw.length()>0) {
+//						allRawParagraphs.add(Util.removeRedundantSpace(currentParagraphRaw.toString()));
+//					    currentParagraphRaw.setLength(0);
+//					}
+//					line = line.substring(toRemove.length()-1, line.length());
+//				} 
 				
 				line = Util.preprocessSentence(line);
 				// If the current line ends with period, split the paragraph. (space might appear before or after the period symbol.)
 				matchList = Pattern.compile(" *\\. *$").matcher(line);
+				currentParagraphRaw.append(line);
+				if(!line.endsWith("-"))
+					currentParagraphRaw.append(" ");
 				if(matchList.find()) {
-				    allRawParagraphs.add(Util.removeRedundantSpace(currentParagraphRaw.toString()));
-				    currentParagraphRaw.setLength(0);
-					
-				} else {    
-				    currentParagraphRaw.append(" ");
-				}       
+					sentenceEndFlag = true;
+				} else {
+					sentenceEndFlag = false;
+				}
+				nonContentlineCount = 0;
 		    }
+		    if(currentParagraphRaw.length()>0) {
+				allRawParagraphs.add(Util.removeRedundantSpace(currentParagraphRaw.toString()));
+			 	currentParagraphRaw.setLength(0);
+			}
 		    bufferedReader.close(); 
 		}
 		catch(FileNotFoundException ex) {
@@ -383,7 +403,7 @@ public class FileImporter {
 	}
 	
 	public static void main(String args[]) {
-		String fileName = "/Users/Jinguo/Dropbox/Git/OntologyMiningFromTracing/data/DomainFiles/MIP_Data/Artifact/Open-PCA-Pump-Requirements.txt";
+		String fileName = "/Users/Jinguo/GitHub/dataExtrator/HealthITDomain/domainTextFiles/AAPCHO case study report.txt";
 		List<String> output= FileImporter.readTextFile(fileName);
 		int count=0;
 		for(String eachParagraph:output) {

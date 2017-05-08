@@ -98,15 +98,26 @@ public class DocProcessor {
 	    	String sentences[] = sentenceDetector.sentDetect(eachParagraph);
 	    	int sentenceCount = 0;
 	    	for(String eachSentence : sentences) {
-	    		sentenceMap.put(newKey, preprocessStringText(eachSentence, false));
-	    		newKey ++; //Increase the key
+	    		String processedSentence = preprocessStringText(eachSentence, false);
+	    		// The processed sentence should more than EOS token.
+	    		if(processedSentence.equals("</s>"))
+	    			continue;
+	    		sentenceMap.put(newKey, processedSentence);	    		
 	    		if(sentenceCount>2) {		
 		    		SentenceTuple tuple = new SentenceTuple();
 		    		tuple.setEmbeddingSentenceID(newKey-1);
+		    		tuple.setEmbeddingSentence(sentenceMap.get(newKey-1));
 		    		tuple.setPreSentenceID(newKey-2);
+		    		tuple.setPreSentence(sentenceMap.get(newKey-2));
 		    		tuple.setPostSentenceID(newKey);
-		    		sentenceTuplesToReturn.add(tuple);
+		    		tuple.setPostSentence(sentenceMap.get(newKey));
+		    		int tokenCount_Embedding = sentenceMap.get(newKey-1).length() - sentenceMap.get(newKey-1).replace(" ", "").length();
+		    		int tokenCount_Pre = sentenceMap.get(newKey-2).length() - sentenceMap.get(newKey-2).replace(" ", "").length();
+		    		int tokenCount_Post = sentenceMap.get(newKey).length() - sentenceMap.get(newKey).replace(" ", "").length();
+		    		if(tokenCount_Embedding > 10 && tokenCount_Pre>10 && tokenCount_Post>10 )
+		    			sentenceTuplesToReturn.add(tuple);
 	    		}
+	    		newKey ++; //Increase the key
 	    		sentenceCount++;
 			}
 	    	
@@ -136,16 +147,30 @@ public class DocProcessor {
 			processedString = processedString.replaceAll("8", " eight ");
 			processedString = processedString.replaceAll("9", " nine ");
 		}
-		processedString = processedString.replaceAll("[^A-Za-z0-9_-]", " ");
+		// remove chars that are not alphabetic, numeric nor hyphen.
+		processedString = processedString.replaceAll("[^A-Za-z0-9-]", " ");
+		// replace redundant hyphen
+		processedString = processedString.replaceAll("-+", "-");
+
+
 		String tokens[] = tokenizer.tokenize(processedString);		
 		for(String token : tokens) {
 			// Remove tokens that don't contain any number nor alphabetic characters
 			if(token.matches(".*[A-Za-z0-9]+.*")) {
+				// remove hyphen when it's not in the middle of words
+				if (token.startsWith("-"))
+					token = token.substring(1, token.length());
+				else if (token.endsWith("-"))
+					token = token.substring(0, token.length()-1);
+
 				stringToReturn.append(token.toLowerCase());
 				stringToReturn.append(" "); 
-				vocab.add(token);
+				vocab.add(token.toLowerCase());
 			}
 		}
+		
+		// Append the End of Sentence (EOS) token.
+		stringToReturn.append("</s>");
 		return stringToReturn.toString();
 	}
 
@@ -218,7 +243,7 @@ public class DocProcessor {
 		    System.out.println("File #" + count + ":" + file.getName() + " processed.");
 		}
 		wirteSkipThoughtSentences(sentenceMap, outputSentenceFile);
-		wirteSkipThoughtSentenceTuples(sentenceTuples, outputTupleFile);
+		wirteSkipThoughtSentenceTuples(sentenceMap, sentenceTuples, outputTupleFile);
 	}
 	
 	/**
@@ -227,10 +252,20 @@ public class DocProcessor {
 	 * @param sentenceTuples
 	 * @param outputTupleFile
 	 */
-	private void wirteSkipThoughtSentenceTuples(List<SentenceTuple> sentenceTuples, String outputTupleFile) {
+	private void wirteSkipThoughtSentenceTuples(Map<Integer, String> sentenceMap, List<SentenceTuple> sentenceTuples, String outputTupleFile) {
 		PrintWriter writer;
+		PrintWriter writer_embed;
+		PrintWriter writer_pre;
+		PrintWriter writer_post;
+		PrintWriter writer_sentence_tuples;
+
 		try {
 			writer = new PrintWriter(outputTupleFile);
+			writer_embed = new PrintWriter("embedding_sentence_id.txt");
+			writer_pre = new PrintWriter("pre_sentence_id.txt");
+			writer_post = new PrintWriter("post_sentence_id.txt");
+			writer_sentence_tuples = new PrintWriter("sentence_tuples.csv");
+
 			writer.print("EmbeddingSentence\tPreSentence\tPostSentence\n");
 			for(SentenceTuple eachTuple:sentenceTuples) {
 				writer.print(eachTuple.getEmbeddingSentenceID());
@@ -239,8 +274,23 @@ public class DocProcessor {
 				writer.print("\t");
 				writer.print(eachTuple.getPostSentenceID());
 				writer.print("\n");
+				
+				// Write the id for each type pf sentence to separate file for torch input.
+				writer_embed.println(eachTuple.getEmbeddingSentenceID());
+				writer_pre.println(eachTuple.getPreSentenceID());
+				writer_post.println(eachTuple.getPostSentenceID());
+				
+				writer_sentence_tuples.print(eachTuple.getEmbeddingSentence());
+				writer_sentence_tuples.print("\t");
+				writer_sentence_tuples.print(eachTuple.getPreSentence());
+				writer_sentence_tuples.print("\t");
+				writer_sentence_tuples.print(eachTuple.getPostSentence());
+				writer_sentence_tuples.print("\n");
 			}
-			writer.close();		
+			writer.close();
+			writer_embed.close();
+			writer_pre.close();
+			writer_post.close();
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
 		}	
@@ -254,16 +304,25 @@ public class DocProcessor {
 	 */
 	private void wirteSkipThoughtSentences(Map<Integer, String> sentenceMap, String outputSentenceFile) {
 		PrintWriter writer;
+		PrintWriter writer_ID;
+		PrintWriter writer_Sentence;
 		try {
 			writer = new PrintWriter(outputSentenceFile);
+			writer_ID = new PrintWriter("skipthough_sentence_id.txt");
+			writer_Sentence = new PrintWriter("skipthough_sentence_content.txt");
 			writer.print("ID\tSentence\n");
 			for(Integer key:sentenceMap.keySet()) {
 				writer.print(key);
 				writer.print("\t");
 				writer.print(sentenceMap.get(key));
 				writer.print("\n");
+				// Write the id and content to separate file for torch input.
+				writer_ID.println(key);
+				writer_Sentence.println(sentenceMap.get(key));
 			}
-			writer.close();		
+			writer.close();	
+			writer_ID.close();
+			writer_Sentence.close();
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
 		}	
@@ -303,6 +362,7 @@ public class DocProcessor {
 		PrintWriter writer;
 		try {
 			writer = new PrintWriter(vocabFile);
+			writer.println("</s>"); // Write the EOS token.
 			for(String token:vocabSorted) {
 				writer.println(token);
 			}
@@ -318,9 +378,10 @@ public class DocProcessor {
 		docProcessor.initializeModels();
 //		System.out.println(docProcessor.preprocessStringText("ok-now yes - _i undersrand 00 ))) _ -.", false));
 		String dirPath = "/Users/Jinguo/GitHub/dataExtrator/HealthITDomain";//"/Users/Jinguo/Dropbox/Git/OntologyMiningFromTracing/data/DomainFiles/PTC";//SiemensDocumentsCloud";
-		String outputPath = "/Users/Jinguo/GitHub/HealthIT_doc_NumberSymbol_ForSkipTought.txt";//"/Users/Jinguo/Desktop/PTC_artifact_doc_noSymbol_2.txt";
+		String outputPath = "/Users/Jinguo/GitHub/HealthIT_doc_NumberSymbol.txt";//"/Users/Jinguo/Desktop/PTC_artifact_doc_noSymbol_2.txt";
 		String outputTuple = "/Users/Jinguo/GitHub/HealthI_Tuple.txt";//"/Users/Jinguo/Desktop/PTC_artifact_doc_noSymbol_2.txt";
-		String vocabFile = "/Users/Jinguo/GitHub/HealthI_Vocab.txt";
+		String vocabFile = "/Users/Jinguo/GitHub/HealthIT_Vocab.txt";
+//		docProcessor.mergeFiles(dirPath, outputPath);
 		docProcessor.createSikpThoughData(dirPath, outputPath, outputTuple);
 		docProcessor.writeVocab(vocabFile);
 	}
